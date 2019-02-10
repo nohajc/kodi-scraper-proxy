@@ -56,3 +56,37 @@ tv-shows:
     - s02e22
     - s02e23
     - s02e25
+- name: Star Trek TOS
+  id: 253
+  ordering:
+  - season: 1
+    episodes:
+      - s01e03
+      - s01e10
+      - s01e06
+      - s01e05
+      - s01e01
+      - s01e04
+      - s01e02
+      - s01e14
+      - s01e07
+      - s01e09
+      - s01e08
+      - s01e13
+      - s01e16
+      - s01e20
+      - s01e11
+      - s01e12
+      - s01e15
+      - s01e17
+      - s01e18
+      - s01e27
+      - s01e19
+      - s01e21
+      - s01e23
+      - s01e22
+      - s01e24
+      - s01e25
+      - s01e26
+      - s01e28
+      - s01e29
