@@ -23,9 +23,11 @@ type ScraperAdapter interface {
 
 // EpisodeOrderingMap is an interface for mapping episode numbers to different numbers
 type EpisodeOrderingMap interface {
+	// HasSpecialOrdering returns true if episodes of the given show need reordering
+	HasSpecialOrdering(showID int64) bool
 	// FromProductionToAired takes episode number in production order
 	// and returns the corresponding episode number in aired order
-	FromProductionToAired(showID int, season int, episode int) (int, int)
+	FromProductionToAired(showID int64, season int, episode int) (int, int)
 }
 
 // NewProxyWithScraperAdapters returns new HTTP proxy server with the given scraper adapters
@@ -60,7 +62,7 @@ type Episode struct {
 	ProductionCode string               `json:"production_code"`
 	SeasonNumber   int                  `json:"season_number"`
 	ShowID         int64                `json:"show_id"`
-	StillPath      interface{}          `json:"still_path"`
+	StillPath      string               `json:"still_path"`
 	VoteAverage    float64              `json:"vote_average"`
 	VoteCount      int                  `json:"vote_count"`
 	Crew           []json.OrderedObject `json:"crew"`
@@ -92,80 +94,118 @@ func (*TMDBScraperOrderingAdapter) Host() string {
 
 // ResponseFilter modifies response from the scraper source to apply the new ordering
 func (adp *TMDBScraperOrderingAdapter) ResponseFilter(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-	if strings.Contains(ctx.Req.URL.Path, "/season/") {
-		var tvShowID int
-		var seasonNum int
-		n, err := fmt.Sscanf(ctx.Req.URL.Path, "/3/tv/%d/season/%d", &tvShowID, &seasonNum)
-		if n != 2 || err != nil {
-			log.Printf("Error parsing season number from request path: %v\n", err)
-			return resp
-		}
-
-		log.Printf("Requested TV show %d, season %d\n", tvShowID, seasonNum)
-		/*body, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			log.Println("Error reading response!")
-			return resp
-		}*/
-
-		dec := json.NewDecoder(resp.Body)
-		dec.UseOrderedObject()
-		parsedResponse := ScraperResponse{}
-		err = dec.Decode(&parsedResponse)
-		if err != nil {
-			log.Printf("Error parsing JSON from response: %v\n", err)
-			return resp
-		}
-
-		//log.Printf("Parsed response: %#v\n", parsedResponse)
-
-		episodesReordered := make([]Episode, len(parsedResponse.Episodes))
-		for i := range parsedResponse.Episodes {
-			_, airedEpNum := adp.orderingMap.FromProductionToAired(tvShowID, seasonNum, i+1)
-			episodesReordered[i] = parsedResponse.Episodes[airedEpNum-1]
-			episodesReordered[i].EpisodeNumber = i + 1
-		}
-		parsedResponse.Episodes = episodesReordered
-
-		var newBodyBuf bytes.Buffer
-		enc := json.NewEncoder(&newBodyBuf)
-
-		err = enc.Encode(parsedResponse)
-		if err != nil {
-			log.Printf("Error serializing modified response: %v\n", err)
-			return resp
-		}
-
-		resp.Body = ioutil.NopCloser(&newBodyBuf)
+	if !strings.Contains(ctx.Req.URL.Path, "/season/") {
+		return resp
 	}
+
+	var tvShowID int64
+	var seasonNum int
+	n, err := fmt.Sscanf(ctx.Req.URL.Path, "/3/tv/%d/season/%d", &tvShowID, &seasonNum)
+	if n != 2 || err != nil {
+		log.Printf("Error parsing season number from request path: %v\n", err)
+		return resp
+	}
+
+	log.Printf("Requested TV show %d, season %d\n", tvShowID, seasonNum)
+
+	if !adp.orderingMap.HasSpecialOrdering(tvShowID) {
+		log.Println("Doesn't need reordering")
+		return resp
+	}
+
+	log.Println("Needs reordering")
+
+	dec := json.NewDecoder(resp.Body)
+	dec.UseOrderedObject()
+	parsedResponse := ScraperResponse{}
+	err = dec.Decode(&parsedResponse)
+	if err != nil {
+		log.Printf("Error parsing JSON from response: %v\n", err)
+		return resp
+	}
+
+	episodesReordered := make([]Episode, len(parsedResponse.Episodes))
+	for i := range parsedResponse.Episodes {
+		_, airedEpNum := adp.orderingMap.FromProductionToAired(tvShowID, seasonNum, i+1)
+		episodesReordered[i] = parsedResponse.Episodes[airedEpNum-1]
+		episodesReordered[i].EpisodeNumber = i + 1
+	}
+	parsedResponse.Episodes = episodesReordered
+
+	var newBodyBuf bytes.Buffer
+	enc := json.NewEncoder(&newBodyBuf)
+
+	err = enc.Encode(parsedResponse)
+	if err != nil {
+		log.Printf("Error serializing modified response: %v\n", err)
+		return resp
+	}
+
+	resp.Body = ioutil.NopCloser(&newBodyBuf)
 	return resp
 }
 
-// SlidersOrderingMap hardcoded
-type SlidersOrderingMap struct{}
+// OfflineOrderingMap contains episode ordering map loaded from an offline resource
+type OfflineOrderingMap struct {
+	Table map[int64]map[int][]string
+}
+
+// NewOfflineOrderingMap creates new instance from Config
+func NewOfflineOrderingMap(cfg Config) *OfflineOrderingMap {
+	result := &OfflineOrderingMap{make(map[int64]map[int][]string)}
+
+	for _, tvShow := range cfg.TVShows {
+		result.Table[tvShow.ID] = make(map[int][]string)
+		for _, epSeasonMap := range tvShow.Ordering {
+			result.Table[tvShow.ID][epSeasonMap.Season] = make([]string, len(epSeasonMap.Episodes))
+			copy(result.Table[tvShow.ID][epSeasonMap.Season], epSeasonMap.Episodes)
+		}
+	}
+
+	return result
+}
+
+// HasSpecialOrdering returns true if episodes of the given show need reordering
+func (m *OfflineOrderingMap) HasSpecialOrdering(showID int64) bool {
+	_, ok := m.Table[showID]
+	return ok
+}
 
 // FromProductionToAired takes production episode number, returns aired episode number
-func (*SlidersOrderingMap) FromProductionToAired(showID int, season int, episode int) (int, int) {
-	if showID != 1649 {
-		return season, episode
+func (m *OfflineOrderingMap) FromProductionToAired(showID int64, season int, episode int) (airedSeason int, airedEpisode int) {
+	airedSeason = season
+	airedEpisode = episode
+
+	tvShow, ok := m.Table[showID]
+	if !ok {
+		return
 	}
-	switch season {
-	case 1:
-		mapping := []int{1, 2, 6, 5, 3, 4, 8, 7, 9, 10}
-		return season, mapping[episode-1]
-	case 2:
-		mapping := []int{1, 6, 5, 2, 4, 13, 3, 9, 12, 8, 7, 10, 11}
-		return season, mapping[episode-1]
-	case 3:
-		mapping := []int{2, 1, 10, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 20, 16, 17, 18, 21, 19, 24, 22, 23, 25}
-		return season, mapping[episode-1]
-	default:
-		return season, episode
+
+	epList, ok := tvShow[season]
+	if !ok {
+		return
 	}
+
+	if episode >= len(epList) {
+		return
+	}
+
+	epNum := epList[episode-1]
+	n, err := fmt.Sscanf(epNum, "s%de%d", &airedSeason, &airedEpisode)
+
+	if n != 2 || err != nil {
+		log.Println(err)
+	}
+
+	log.Printf("Mapping s%02de%02d to s%02de%02d\n", season, episode, airedSeason, airedEpisode)
+	return
 }
 
 func main() {
-	proxy := NewProxyWithScraperAdapters(&TMDBScraperOrderingAdapter{&SlidersOrderingMap{}})
+	shows := LoadConfig("ordering.yaml")
+	log.Printf("%+v\n", shows)
+
+	proxy := NewProxyWithScraperAdapters(&TMDBScraperOrderingAdapter{NewOfflineOrderingMap(shows)})
 	proxy.Verbose = false
 
 	log.Fatal(http.ListenAndServe(":8080", proxy))
