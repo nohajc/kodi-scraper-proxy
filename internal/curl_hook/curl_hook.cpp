@@ -6,6 +6,9 @@
 #include <unordered_map>
 #include <memory>
 #include <string>
+#include <future>
+
+#include "../../pkg/libfilter/libfilter.h"
 
 #undef curl_easy_setopt
 
@@ -53,19 +56,38 @@ extern "C" {
 }
 
 
-typedef size_t (*write_callback_ptr_t)(char *ptr, size_t size, size_t nmemb, void *userdata);
+//typedef size_t (*write_callback_ptr_t)(char *ptr, size_t size, size_t nmemb, void *userdata);
 
 
 struct handle_ctx {
     CURL *handle;
     write_callback_ptr_t orig_write_callback = (write_callback_ptr_t)fwrite;
-    void* userdata;
+    void* userdata = nullptr;
     std::string request_url;
-    std::string response_body;
+    std::promise<void> complete;
+    std::future<void> is_complete = complete.get_future();
+    //std::string response_body;
 };
 
 // TODO: thread-safe access
 std::unordered_map<CURL*, std::unique_ptr<handle_ctx>> g_contextForHandle;
+
+std::string getURLPath(const std::string& url) {
+    auto hostPos = url.find("://");
+    std::string fromHost;
+    if (hostPos == std::string::npos) {
+        fromHost = url;
+    }
+    else {
+        fromHost = url.substr(hostPos + 3);
+    }
+    auto pathPos = fromHost.find("/");
+    if (pathPos == std::string::npos) {
+        return "";
+    }
+
+    return fromHost.substr(pathPos);
+}
 
 class trace_call {
     const char* func_name;
@@ -106,11 +128,12 @@ public:
 
 static size_t write_callback_hook(char *ptr, size_t size, size_t nmemb, handle_ctx *context) {
     TRACE_CALL(context->handle);
-    auto bytesProcessed = context->orig_write_callback(ptr, size, nmemb, context->userdata);
+    //auto bytesProcessed = context->orig_write_callback(ptr, size, nmemb, context->userdata);
+    //context->response_body.append(ptr, bytesProcessed);
+    //return bytesProcessed;
 
-    context->response_body.append(ptr, bytesProcessed);
-
-    return bytesProcessed;
+    GoSlice data{ ptr, static_cast<GoInt>(nmemb), static_cast<GoInt>(nmemb) };
+    return ResponseWrite(context, data);
 }
 
 CURL* curl_easy_init() {
@@ -136,7 +159,12 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
             TRACE_CALL_WITH(CURLOPT_URL, handle);
             va_start(args, option);
             auto url = va_arg(args, char*);
-            context->request_url = url;
+            if (context->request_url.empty()) {
+                context->request_url = getURLPath(url);
+            }
+            else {
+                context = (g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle_ctx{handle})).get();
+            }
             va_end(args);
             return orig_curl_easy_setopt(handle, option, url);
         }
@@ -168,30 +196,47 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
     __builtin_return(ret);
 }
 
-static void log_response(CURL* handle) {
+/*static void log_response(CURL* handle) {
     auto it = g_contextForHandle.find(handle);
     if (it != g_contextForHandle.end()) {
         auto context = it->second.get();
         auto& resp = context->response_body;
         fprintf(stderr, "   Client received %d bytes from %s: '%s'\n", resp.size(), context->request_url.c_str(), resp.c_str());
     }
-}
+}*/
 
 void curl_easy_reset(CURL* handle) {
     TRACE_CALL(handle);
-    log_response(handle);
+    //log_response(handle);
     g_contextForHandle.erase(handle);
     orig_curl_easy_reset(handle);
 }
 
 void curl_easy_cleanup(CURL* handle) {
     TRACE_CALL(handle);
-    log_response(handle);
+    //log_response(handle);
     g_contextForHandle.erase(handle);
     orig_curl_easy_cleanup(handle);
 }
 
+static void close_callback(void* ctx) {
+    auto context = reinterpret_cast<handle_ctx*>(ctx);
+    context->complete.set_value();
+}
+
+void do_filter_request(handle_ctx* context) {
+    GoString urlPath{ &context->request_url[0], static_cast<GoInt>(context->request_url.size()) };
+    FilterRequest(context, urlPath, context->orig_write_callback, close_callback, context->userdata);
+}
+
 CURLcode curl_easy_perform(CURL* handle) {
     TRACE_CALL(handle);
-    return orig_curl_easy_perform(handle);
+    auto context = g_contextForHandle[handle].get();
+    do_filter_request(context);
+    auto code = orig_curl_easy_perform(handle);
+    // signal that the response is complete
+    ResponseClose(context);
+    // wait for completion
+    context->is_complete.get();
+    return code;
 }
