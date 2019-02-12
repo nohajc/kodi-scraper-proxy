@@ -55,7 +55,7 @@ type ScraperResponse struct {
 	//Images       []json.OrderedObject `json:"images"`
 }
 
-// TMDBScraperOrderingAdapter changes ordering of episodes based on provided mapping (TODO)
+// TMDBScraperOrderingAdapter changes ordering of episodes based on provided mapping
 type TMDBScraperOrderingAdapter struct {
 	OrderingMap EpisodeOrderingMap
 }
@@ -109,7 +109,6 @@ func (adp *TMDBScraperOrderingAdapter) responseBodyFilterInternal(in io.ReadClos
 			log.Printf("Error parsing JSON from response: %v\n", err)
 			return
 		}
-		log.Println("PARSED JSON")
 
 		episodesReordered := make([]Episode, len(parsedResponse.Episodes))
 		for i := range parsedResponse.Episodes {

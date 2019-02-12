@@ -44,7 +44,10 @@ ORIG(curl_easy_setopt);
 ORIG(curl_easy_init);
 ORIG(curl_easy_reset);
 ORIG(curl_easy_cleanup);
-ORIG(curl_easy_perform);
+//ORIG(curl_easy_perform);
+ORIG(curl_multi_add_handle);
+//ORIG(curl_multi_perform);
+ORIG(curl_multi_info_read);
 
 
 extern "C" {
@@ -52,7 +55,10 @@ extern "C" {
     CURL* curl_easy_init();
     void curl_easy_reset(CURL* handle);
     void curl_easy_cleanup(CURL* handle);
-    CURLcode curl_easy_perform(CURL* handle);
+    //CURLcode curl_easy_perform(CURL* handle);
+    CURLMcode curl_multi_add_handle(CURLM* multi_handle, CURL* easy_handle);
+    //CURLMcode curl_multi_perform(CURLM* multi_handle, int* running_handles);
+    CURLMsg* curl_multi_info_read(CURLM* multi_handle, int* msgs_in_queue);
 }
 
 
@@ -66,7 +72,6 @@ struct handle_ctx {
     std::string request_url;
     std::promise<void> complete;
     std::future<void> is_complete = complete.get_future();
-    //std::string response_body;
 };
 
 // TODO: thread-safe access
@@ -128,10 +133,6 @@ public:
 
 static size_t write_callback_hook(char *ptr, size_t size, size_t nmemb, handle_ctx *context) {
     TRACE_CALL(context->handle);
-    //auto bytesProcessed = context->orig_write_callback(ptr, size, nmemb, context->userdata);
-    //context->response_body.append(ptr, bytesProcessed);
-    //return bytesProcessed;
-
     GoSlice data{ ptr, static_cast<GoInt>(nmemb), static_cast<GoInt>(nmemb) };
     return ResponseWrite(context, data);
 }
@@ -155,7 +156,6 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
         switch (option) {
         case CURLOPT_URL:
         {
-            //fprintf(stderr, "Called curl_easy_setopt CURLOPT_URL with handle %p\n", handle);
             TRACE_CALL_WITH(CURLOPT_URL, handle);
             va_start(args, option);
             auto url = va_arg(args, char*);
@@ -170,7 +170,6 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
         }
         case CURLOPT_WRITEDATA:
         {
-            //fprintf(stderr, "Called curl_easy_setopt CURLOPT_WRITEDATA with handle %p\n", handle);
             TRACE_CALL_WITH(CURLOPT_WRITEDATA, handle);
             va_start(args, option);
             auto data = va_arg(args, void*);
@@ -180,7 +179,6 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
         }
         case CURLOPT_WRITEFUNCTION:
         {
-            //fprintf(stderr, "Called curl_easy_setopt CURLOPT_WRITEFUNCTION with handle %p\n", handle);
             TRACE_CALL_WITH(CURLOPT_WRITEFUNCTION, handle);
             va_start(args, option);
             auto write_callback_ptr = va_arg(args, write_callback_ptr_t);
@@ -229,14 +227,42 @@ void do_filter_request(handle_ctx* context) {
     FilterRequest(context, urlPath, context->orig_write_callback, close_callback, context->userdata);
 }
 
-CURLcode curl_easy_perform(CURL* handle) {
-    TRACE_CALL(handle);
-    auto context = g_contextForHandle[handle].get();
+/*CURLcode curl_easy_perform(CURL* handle) {
+    //TRACE_CALL(handle);
+    return orig_curl_easy_perform(handle);
+}*/
+
+CURLMcode curl_multi_add_handle(CURLM* multi_handle, CURL* easy_handle) {
+    TRACE_CALL(easy_handle);
+
+    auto context = g_contextForHandle[easy_handle].get();
     do_filter_request(context);
-    auto code = orig_curl_easy_perform(handle);
-    // signal that the response is complete
-    ResponseClose(context);
-    // wait for completion
-    context->is_complete.get();
-    return code;
+    return orig_curl_multi_add_handle(multi_handle, easy_handle);
+}
+
+/*CURLMcode curl_multi_perform(CURLM *multi_handle, int *running_handles) {
+    //TRACE_CALL(nullptr);
+    return orig_curl_multi_perform(multi_handle, running_handles);
+}*/
+
+CURLMsg* curl_multi_info_read(CURLM* multi_handle, int* msgs_in_queue) {
+    TRACE_CALL(nullptr);
+
+    auto msg = orig_curl_multi_info_read(multi_handle, msgs_in_queue);
+
+    if (msg && msg->msg == CURLMSG_DONE) {
+        fprintf(stderr, "\twith handle %p\n", msg->easy_handle);
+        auto context = g_contextForHandle[msg->easy_handle].get();
+        if (context) {
+            // signal that the response is complete
+            ResponseClose(context);
+            // wait for completion
+            context->is_complete.get();
+        }
+        else {
+            fprintf(stderr, "\twarning: unknown handle\n");
+        }
+    }
+
+    return msg;
 }
