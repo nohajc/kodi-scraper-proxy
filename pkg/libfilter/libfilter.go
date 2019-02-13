@@ -103,6 +103,9 @@ func ResponseWrite(hnd unsafe.Pointer, data []byte) C.size_t {
 	log.Printf("ResponseWrite with handle %v\n", hnd)
 	reqMapMtx.Lock()
 	ctx := reqMap[uintptr(hnd)]
+	if ctx == nil {
+		panic("ResponseWrite: got nil context!")
+	}
 	reqMapMtx.Unlock()
 
 	written, _ := ctx.Pip.WriteEnd.Write(data)

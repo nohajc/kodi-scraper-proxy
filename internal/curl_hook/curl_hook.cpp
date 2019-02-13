@@ -44,7 +44,7 @@ ORIG(curl_easy_setopt);
 ORIG(curl_easy_init);
 ORIG(curl_easy_reset);
 ORIG(curl_easy_cleanup);
-//ORIG(curl_easy_perform);
+ORIG(curl_easy_perform);
 ORIG(curl_multi_add_handle);
 //ORIG(curl_multi_perform);
 ORIG(curl_multi_info_read);
@@ -55,7 +55,7 @@ extern "C" {
     CURL* curl_easy_init();
     void curl_easy_reset(CURL* handle);
     void curl_easy_cleanup(CURL* handle);
-    //CURLcode curl_easy_perform(CURL* handle);
+    CURLcode curl_easy_perform(CURL* handle);
     CURLMcode curl_multi_add_handle(CURLM* multi_handle, CURL* easy_handle);
     //CURLMcode curl_multi_perform(CURLM* multi_handle, int* running_handles);
     CURLMsg* curl_multi_info_read(CURLM* multi_handle, int* msgs_in_queue);
@@ -70,6 +70,7 @@ struct handle_ctx {
     write_callback_ptr_t orig_write_callback = (write_callback_ptr_t)fwrite;
     void* userdata = nullptr;
     std::string request_url;
+    bool easy_perform_called = false;
     std::promise<void> complete;
     std::future<void> is_complete = complete.get_future();
 
@@ -229,16 +230,28 @@ void do_filter_request(handle_ctx* context) {
     FilterRequest(context, urlPath, context->orig_write_callback, close_callback, context->userdata);
 }
 
-/*CURLcode curl_easy_perform(CURL* handle) {
-    //TRACE_CALL(handle);
-    return orig_curl_easy_perform(handle);
-}*/
+CURLcode curl_easy_perform(CURL* handle) {
+    TRACE_CALL(handle);
+    auto context = g_contextForHandle[handle].get();
+    context->easy_perform_called = true;
+    do_filter_request(context);
+
+    auto code = orig_curl_easy_perform(handle);
+    // signal that the response is complete
+    ResponseClose(context);
+    // wait for completion
+    context->is_complete.get();
+
+    return code;
+}
 
 CURLMcode curl_multi_add_handle(CURLM* multi_handle, CURL* easy_handle) {
     TRACE_CALL(easy_handle);
 
     auto context = g_contextForHandle[easy_handle].get();
-    do_filter_request(context);
+    if (!context->easy_perform_called) {
+        do_filter_request(context);
+    }
     return orig_curl_multi_add_handle(multi_handle, easy_handle);
 }
 
@@ -255,7 +268,7 @@ CURLMsg* curl_multi_info_read(CURLM* multi_handle, int* msgs_in_queue) {
     if (msg && msg->msg == CURLMSG_DONE) {
         fprintf(stderr, "\twith handle %p\n", msg->easy_handle);
         auto context = g_contextForHandle[msg->easy_handle].get();
-        if (context) {
+        if (context && !context->easy_perform_called) {
             // signal that the response is complete
             ResponseClose(context);
             // wait for completion
