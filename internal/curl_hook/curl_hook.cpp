@@ -8,7 +8,7 @@
 #include <string>
 #include <future>
 
-#include "../../pkg/libfilter/libfilter.h"
+#include "bridge/libbridge.h"
 
 #undef curl_easy_setopt
 
