@@ -157,7 +157,7 @@ static size_t write_callback_hook(char *ptr, size_t size, size_t nmemb, handle_c
 CURL* curl_easy_init() {
     TRACE_CALL(nullptr)
     auto handle = orig_curl_easy_init();
-    fprintf(stderr, "   Creating handle %p\n", handle);
+    //fprintf(stderr, "   Creating handle %p\n", handle);
     g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle);
     return handle;
 }
@@ -286,7 +286,7 @@ CURLMsg* curl_multi_info_read(CURLM* multi_handle, int* msgs_in_queue) {
     auto msg = orig_curl_multi_info_read(multi_handle, msgs_in_queue);
 
     if (msg && msg->msg == CURLMSG_DONE) {
-        fprintf(stderr, "\twith handle %p\n", msg->easy_handle);
+        //fprintf(stderr, "\twith handle %p\n", msg->easy_handle);
         auto context = g_contextForHandle[msg->easy_handle].get();
         if (context && !context->easy_perform_called) {
             // signal that the response is complete

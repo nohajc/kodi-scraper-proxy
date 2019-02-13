@@ -129,12 +129,12 @@ func FilterRequest(
 		CloseCB:  closeCallback,
 	}
 
-	if gAdapter.Host() == urlHost {
+	if gAdapter.Host() == "*" || gAdapter.Host() == urlHost {
 		r, w := io.Pipe()
 		ctx.ReadEnd = r
 		ctx.WriteEnd = w
 		log.Printf("Applying response filter to %s%s", urlHost, urlPath)
-		gAdapter.ResponseBodyFilter(ctx.ReadEnd, callbackWriteCloser, urlPath)
+		go gAdapter.ResponseBodyFilter(ctx.ReadEnd, callbackWriteCloser, urlPath)
 	} else {
 		// if adapter host does not match url host, do not call BodyFilter at all;
 		// set ctx.WriteEnd to CallbackWriteCloser instead for direct copy
