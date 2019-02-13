@@ -66,12 +66,14 @@ extern "C" {
 
 
 struct handle_ctx {
-    CURL *handle;
+    CURL* handle;
     write_callback_ptr_t orig_write_callback = (write_callback_ptr_t)fwrite;
     void* userdata = nullptr;
     std::string request_url;
     std::promise<void> complete;
     std::future<void> is_complete = complete.get_future();
+
+    handle_ctx(CURL* h) : handle(h) {}
 };
 
 // TODO: thread-safe access
@@ -141,7 +143,7 @@ CURL* curl_easy_init() {
     TRACE_CALL(nullptr)
     auto handle = orig_curl_easy_init();
     fprintf(stderr, "   Creating handle %p\n", handle);
-    g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle_ctx{handle});
+    g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle);
     return handle;
 }
 
@@ -163,7 +165,7 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
                 context->request_url = getURLPath(url);
             }
             else {
-                context = (g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle_ctx{handle})).get();
+                context = (g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle)).get();
             }
             va_end(args);
             return orig_curl_easy_setopt(handle, option, url);
