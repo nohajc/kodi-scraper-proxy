@@ -5,11 +5,10 @@ import (
 	"os"
 
 	"github.com/nohajc/kodi-scraper-proxy/internal/filter"
-	"github.com/nohajc/kodi-scraper-proxy/pkg/api"
 )
 
 // PluginResponseAdapter exposes functionality of this plugin
-var PluginResponseAdapter api.ResponseAdapter
+var PluginResponseAdapter filter.TMDBScraperOrderingAdapter
 
 func init() {
 	orderingCfgPath := os.Getenv("ORDERING_CONFIG")
@@ -19,8 +18,8 @@ func init() {
 	}
 
 	shows := filter.LoadConfig(orderingCfgPath)
-	log.Printf("%+v\n", shows)
-	PluginResponseAdapter = &filter.TMDBScraperOrderingAdapter{
+	//log.Printf("%+v\n", shows)
+	PluginResponseAdapter = filter.TMDBScraperOrderingAdapter{
 		OrderingMap: filter.NewOfflineOrderingMap(shows),
 	}
 	log.Println("Succesfully loaded scraper_filter plugin")

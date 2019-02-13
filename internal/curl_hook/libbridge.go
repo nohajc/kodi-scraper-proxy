@@ -65,14 +65,14 @@ func init() {
 	if err != nil {
 		log.Printf("Warning: %v\n", err)
 	} else {
-		adapterPtr := adapterSym.(*api.ResponseAdapter)
+		adapter := adapterSym.(api.ResponseAdapter)
 		/*if !ok {
 			log.Printf("Error: ResponseAdapter doesn't have the right type")
 			return
 		}*/
 		// could be nil if there was an error during plugin initialization
-		if adapterPtr != nil {
-			gAdapter = *adapterPtr
+		if adapter != nil {
+			gAdapter = adapter
 		}
 	}
 }
