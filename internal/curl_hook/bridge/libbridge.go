@@ -24,13 +24,16 @@ import (
 	"unsafe"
 )
 
-type pipe struct {
-	ReadEnd  io.ReadCloser
-	WriteEnd io.WriteCloser
+// scraperAdapter in an interface for kodi scraper filters
+// which can modify response from the scraper source
+type scraperAdapter interface {
+	Host() string
+	ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestURL string)
 }
 
 type context struct {
-	Pip pipe
+	ReadEnd  io.ReadCloser
+	WriteEnd io.WriteCloser
 }
 
 var (
@@ -38,12 +41,13 @@ var (
 	reqMapMtx sync.Mutex
 )
 
-var scraperAdapter *filter.TMDBScraperOrderingAdapter
+var adapter scraperAdapter
 
 func init() {
-	shows := filter.LoadConfig("ordering.yaml")
+	// TODO: move into plugin
+	shows := filter.LoadConfig("ordering.yaml") // TODO: get path from environment
 	log.Printf("%+v\n", shows)
-	scraperAdapter = &filter.TMDBScraperOrderingAdapter{
+	adapter = &filter.TMDBScraperOrderingAdapter{
 		OrderingMap: filter.NewOfflineOrderingMap(shows),
 	}
 }
@@ -78,23 +82,39 @@ func (cb *CallbackWriteCloser) Close() error {
 
 // FilterRequest registers curl handle
 //export FilterRequest
-func FilterRequest(hnd unsafe.Pointer, url string, writeCallback C.write_callback_ptr_t, closeCallback C.close_callback_ptr_t, userdata unsafe.Pointer) {
+func FilterRequest(
+	hnd unsafe.Pointer,
+	urlHost string, urlPath string,
+	writeCallback C.write_callback_ptr_t,
+	closeCallback C.close_callback_ptr_t,
+	userdata unsafe.Pointer) {
+
 	log.Printf("FilterRequest with handle %v\n", hnd)
-	r, w := io.Pipe()
-	ctx := &context{
-		Pip: pipe{r, w},
-	}
+
+	ctx := &context{}
 
 	reqMapMtx.Lock()
 	reqMap[uintptr(hnd)] = ctx
 	reqMapMtx.Unlock()
 
-	scraperAdapter.ResponseBodyFilter(ctx.Pip.ReadEnd, &CallbackWriteCloser{
+	callbackWriteCloser := &CallbackWriteCloser{
 		Hnd:      hnd,
 		Userdata: userdata,
 		WriteCB:  writeCallback,
 		CloseCB:  closeCallback,
-	}, url)
+	}
+
+	if adapter.Host() == urlHost {
+		r, w := io.Pipe()
+		ctx.ReadEnd = r
+		ctx.WriteEnd = w
+		log.Printf("Applying response filter to %s%s", urlHost, urlPath)
+		adapter.ResponseBodyFilter(ctx.ReadEnd, callbackWriteCloser, urlPath)
+	} else {
+		// if adapter host does not match url host, do not call BodyFilter at all;
+		// set ctx.WriteEnd to CallbackWriteCloser instead for direct copy
+		ctx.WriteEnd = callbackWriteCloser
+	}
 }
 
 // ResponseWrite takes curl handle and data. It sends the data to the corresponding request pipe.
@@ -108,7 +128,7 @@ func ResponseWrite(hnd unsafe.Pointer, data []byte) C.size_t {
 	}
 	reqMapMtx.Unlock()
 
-	written, _ := ctx.Pip.WriteEnd.Write(data)
+	written, _ := ctx.WriteEnd.Write(data)
 	return C.size_t(written)
 }
 
@@ -120,7 +140,7 @@ func ResponseClose(hnd unsafe.Pointer) {
 	ctx := reqMap[uintptr(hnd)]
 	reqMapMtx.Unlock()
 
-	ctx.Pip.WriteEnd.Close()
+	ctx.WriteEnd.Close()
 }
 
 func main() {}

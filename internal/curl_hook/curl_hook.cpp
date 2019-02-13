@@ -64,12 +64,16 @@ extern "C" {
 
 //typedef size_t (*write_callback_ptr_t)(char *ptr, size_t size, size_t nmemb, void *userdata);
 
+struct url_components {
+    std::string host;
+    std::string path;
+};
 
 struct handle_ctx {
     CURL* handle;
     write_callback_ptr_t orig_write_callback = (write_callback_ptr_t)fwrite;
     void* userdata = nullptr;
-    std::string request_url;
+    url_components request_url;
     bool easy_perform_called = false;
     std::promise<void> complete;
     std::future<void> is_complete = complete.get_future();
@@ -80,7 +84,8 @@ struct handle_ctx {
 // TODO: thread-safe access
 std::unordered_map<CURL*, std::unique_ptr<handle_ctx>> g_contextForHandle;
 
-std::string getURLPath(const std::string& url) {
+
+url_components getURLComponents(const std::string& url) {
     auto hostPos = url.find("://");
     std::string fromHost;
     if (hostPos == std::string::npos) {
@@ -91,10 +96,14 @@ std::string getURLPath(const std::string& url) {
     }
     auto pathPos = fromHost.find("/");
     if (pathPos == std::string::npos) {
-        return "";
+        return {fromHost, "/"};
     }
 
-    return fromHost.substr(pathPos);
+    return {fromHost.substr(0, pathPos), fromHost.substr(pathPos)};
+}
+
+GoString to_go_string_view(const std::string& str) {
+    return{ &str[0], static_cast<GoInt>(str.size()) };
 }
 
 class trace_call {
@@ -161,15 +170,15 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
         {
             TRACE_CALL_WITH(CURLOPT_URL, handle);
             va_start(args, option);
-            auto url = va_arg(args, char*);
-            if (context->request_url.empty()) {
-                context->request_url = getURLPath(url);
+            auto url_str = va_arg(args, char*);
+            if (context->request_url.host.empty()) {
+                context->request_url = getURLComponents(url_str);
             }
             else {
                 context = (g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle)).get();
             }
             va_end(args);
-            return orig_curl_easy_setopt(handle, option, url);
+            return orig_curl_easy_setopt(handle, option, url_str);
         }
         case CURLOPT_WRITEDATA:
         {
@@ -226,8 +235,14 @@ static void close_callback(void* ctx) {
 }
 
 void do_filter_request(handle_ctx* context) {
-    GoString urlPath{ &context->request_url[0], static_cast<GoInt>(context->request_url.size()) };
-    FilterRequest(context, urlPath, context->orig_write_callback, close_callback, context->userdata);
+    // These string references will be valid until handle cleanup
+    // so it should be OK to pass them to Golang as GoStrings
+    auto& urlHost = context->request_url.host;
+    auto& urlPath = context->request_url.path;
+
+    FilterRequest(
+        context, to_go_string_view(urlHost), to_go_string_view(urlPath),
+        context->orig_write_callback, close_callback, context->userdata);
 }
 
 CURLcode curl_easy_perform(CURL* handle) {
