@@ -8,7 +8,7 @@
 #include <string>
 #include <future>
 
-#include "bridge/libbridge.h"
+#include "libbridge.h"
 
 #undef curl_easy_setopt
 
@@ -140,8 +140,13 @@ public:
 
 #define FUNC_WITH(option) __FUNCTION__ #option
 
+#ifdef DEBUG
 #define TRACE_CALL(handle) trace_call _call(__FUNCTION__, handle);
 #define TRACE_CALL_WITH(option, handle) trace_call _call(__FUNCTION__, #option, handle)
+#else
+#define TRACE_CALL(handle)
+#define TRACE_CALL_WITH(option, handle)
+#endif
 
 static size_t write_callback_hook(char *ptr, size_t size, size_t nmemb, handle_ctx *context) {
     TRACE_CALL(context->handle);

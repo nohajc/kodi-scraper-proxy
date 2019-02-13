@@ -15,21 +15,14 @@ import "C"
 
 import (
 	"io"
-	"sync"
-
-	"github.com/nohajc/kodi-scraper-proxy/internal/filter"
-)
-import (
 	"log"
+	"os"
+	"plugin"
+	"sync"
 	"unsafe"
-)
 
-// scraperAdapter in an interface for kodi scraper filters
-// which can modify response from the scraper source
-type scraperAdapter interface {
-	Host() string
-	ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestURL string)
-}
+	"github.com/nohajc/kodi-scraper-proxy/pkg/api"
+)
 
 type context struct {
 	ReadEnd  io.ReadCloser
@@ -41,14 +34,46 @@ var (
 	reqMapMtx sync.Mutex
 )
 
-var adapter scraperAdapter
+// NopResponseAdapter does nothing
+type NopResponseAdapter struct{}
+
+// Host retuns empty string so that no valid request can match this filter
+func (*NopResponseAdapter) Host() string {
+	return ""
+}
+
+// ResponseBodyFilter is never called because empty host is invalid
+func (*NopResponseAdapter) ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestURL string) {
+}
+
+var gAdapter api.ResponseAdapter = &NopResponseAdapter{}
 
 func init() {
-	// TODO: move into plugin
-	shows := filter.LoadConfig("ordering.yaml") // TODO: get path from environment
-	log.Printf("%+v\n", shows)
-	adapter = &filter.TMDBScraperOrderingAdapter{
-		OrderingMap: filter.NewOfflineOrderingMap(shows),
+	filterPluginPath := os.Getenv("FILTER_PLUGIN")
+	if filterPluginPath == "" {
+		log.Println("Error: FILTER_PLUGIN has to be specified")
+		return
+	}
+
+	filterPlugin, err := plugin.Open(filterPluginPath)
+	if err != nil {
+		log.Printf("Error loading plugin: %v\n", err)
+		return
+	}
+
+	adapterSym, err := filterPlugin.Lookup("PluginResponseAdapter")
+	if err != nil {
+		log.Printf("Warning: %v\n", err)
+	} else {
+		adapterPtr := adapterSym.(*api.ResponseAdapter)
+		/*if !ok {
+			log.Printf("Error: ResponseAdapter doesn't have the right type")
+			return
+		}*/
+		// could be nil if there was an error during plugin initialization
+		if adapterPtr != nil {
+			gAdapter = *adapterPtr
+		}
 	}
 }
 
@@ -63,7 +88,7 @@ type CallbackWriteCloser struct {
 
 // Write writes bytes
 func (cb *CallbackWriteCloser) Write(data []byte) (int, error) {
-	log.Printf("CallbackWriteCloser Write with handle %v\n", cb.Hnd)
+	//log.Printf("CallbackWriteCloser Write with handle %v\n", cb.Hnd)
 	rawBytes := C.CBytes(data)
 	defer C.free(rawBytes)
 	return int(C.invoke_write_callback(cb.WriteCB, (*C.char)(rawBytes), 1, C.size_t(len(data)), cb.Userdata)), nil
@@ -71,7 +96,7 @@ func (cb *CallbackWriteCloser) Write(data []byte) (int, error) {
 
 // Close closes the WriteCloser
 func (cb *CallbackWriteCloser) Close() error {
-	log.Printf("CallbackWriteCloser Close with handle %v\n", cb.Hnd)
+	//log.Printf("CallbackWriteCloser Close with handle %v\n", cb.Hnd)
 	C.invoke_close_callback(cb.CloseCB, cb.Hnd)
 
 	reqMapMtx.Lock()
@@ -89,7 +114,7 @@ func FilterRequest(
 	closeCallback C.close_callback_ptr_t,
 	userdata unsafe.Pointer) {
 
-	log.Printf("FilterRequest with handle %v\n", hnd)
+	//log.Printf("FilterRequest with handle %v\n", hnd)
 
 	ctx := &context{}
 
@@ -104,12 +129,12 @@ func FilterRequest(
 		CloseCB:  closeCallback,
 	}
 
-	if adapter.Host() == urlHost {
+	if gAdapter.Host() == urlHost {
 		r, w := io.Pipe()
 		ctx.ReadEnd = r
 		ctx.WriteEnd = w
 		log.Printf("Applying response filter to %s%s", urlHost, urlPath)
-		adapter.ResponseBodyFilter(ctx.ReadEnd, callbackWriteCloser, urlPath)
+		gAdapter.ResponseBodyFilter(ctx.ReadEnd, callbackWriteCloser, urlPath)
 	} else {
 		// if adapter host does not match url host, do not call BodyFilter at all;
 		// set ctx.WriteEnd to CallbackWriteCloser instead for direct copy
@@ -120,7 +145,7 @@ func FilterRequest(
 // ResponseWrite takes curl handle and data. It sends the data to the corresponding request pipe.
 //export ResponseWrite
 func ResponseWrite(hnd unsafe.Pointer, data []byte) C.size_t {
-	log.Printf("ResponseWrite with handle %v\n", hnd)
+	//log.Printf("ResponseWrite with handle %v\n", hnd)
 	reqMapMtx.Lock()
 	ctx := reqMap[uintptr(hnd)]
 	if ctx == nil {
@@ -135,7 +160,7 @@ func ResponseWrite(hnd unsafe.Pointer, data []byte) C.size_t {
 // ResponseClose signals that the response is complete, i. e. ResponseWrite won't be called again
 //export ResponseClose
 func ResponseClose(hnd unsafe.Pointer) {
-	log.Printf("ResponseClose with handle %v\n", hnd)
+	//log.Printf("ResponseClose with handle %v\n", hnd)
 	reqMapMtx.Lock()
 	ctx := reqMap[uintptr(hnd)]
 	reqMapMtx.Unlock()

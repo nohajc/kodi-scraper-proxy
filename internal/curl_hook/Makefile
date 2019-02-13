@@ -1,13 +1,13 @@
 CXX=g++
 CXXFLAGS=-fPIC -std=c++17
-LDFLAGS=-L bridge -lbridge
+LDFLAGS=-L. -lbridge
 
 curl_hook.so: curl_hook.o
 	g++ -shared -fPIC $< -o $@ $(LDFLAGS)
 
-curl_hook.o: bridge/libbridge.h
+curl_hook.o: libbridge.h
 
-bridge/libbridge.h: libbridge.a
+libbridge.h: libbridge.so
 
-libbridge.a: bridge/libbridge.go
-	(cd bridge && go build -buildmode=c-archive -o $@)
+libbridge.so: libbridge.go
+	go build -buildmode=c-shared -o $@ $<
