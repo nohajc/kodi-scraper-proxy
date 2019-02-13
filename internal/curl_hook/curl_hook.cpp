@@ -274,9 +274,6 @@ CURLMsg* curl_multi_info_read(CURLM* multi_handle, int* msgs_in_queue) {
             // wait for completion
             context->is_complete.get();
         }
-        else {
-            fprintf(stderr, "\twarning: unknown handle\n");
-        }
     }
 
     return msg;
