@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <future>
+#include <mutex>
 
 #include "libbridge.h"
 
@@ -69,21 +70,48 @@ struct url_components {
     std::string path;
 };
 
-struct handle_ctx {
+class handle_ctx {
+    std::promise<void> complete_prom;
+    std::future<void> complete_fut = complete_prom.get_future();
+
+public:
     CURL* handle;
     write_callback_ptr_t orig_write_callback = (write_callback_ptr_t)fwrite;
     void* userdata = nullptr;
     url_components request_url;
     bool easy_perform_called = false;
-    std::promise<void> complete;
-    std::future<void> is_complete = complete.get_future();
 
     handle_ctx(CURL* h) : handle(h) {}
+
+    void complete() {
+        complete_prom.set_value();
+    }
+
+    void wait_for_completion() {
+        complete_fut.get();
+        // reset for possible next connection
+        complete_prom = {};
+        complete_fut = complete_prom.get_future();
+    }
 };
 
-// TODO: thread-safe access
 std::unordered_map<CURL*, std::unique_ptr<handle_ctx>> g_contextForHandle;
+std::mutex g_contextForHandleMutex;
 
+handle_ctx* create_context(CURL* handle) {
+    std::lock_guard<std::mutex> lock(g_contextForHandleMutex);
+    return (g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle)).get();
+}
+
+void destroy_context(CURL* handle) {
+    std::lock_guard<std::mutex> lock(g_contextForHandleMutex);
+    g_contextForHandle.erase(handle);
+}
+
+handle_ctx* get_context(CURL* handle) {
+    std::lock_guard<std::mutex> lock(g_contextForHandleMutex);
+    return g_contextForHandle[handle].get();
+}
 
 url_components getURLComponents(const std::string& url) {
     auto hostPos = url.find("://");
@@ -158,7 +186,7 @@ CURL* curl_easy_init() {
     TRACE_CALL(nullptr)
     auto handle = orig_curl_easy_init();
     //fprintf(stderr, "   Creating handle %p\n", handle);
-    g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle);
+    create_context(handle);
     return handle;
 }
 
@@ -166,45 +194,37 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
     void* args_copy = __builtin_apply_args();
     va_list args;
 
-    auto it = g_contextForHandle.find(handle);
-    if (it != g_contextForHandle.end()) {
-        auto context = it->second.get();
+    auto context = get_context(handle);
 
-        switch (option) {
-        case CURLOPT_URL:
-        {
-            TRACE_CALL_WITH(CURLOPT_URL, handle);
-            va_start(args, option);
-            auto url_str = va_arg(args, char*);
-            if (context->request_url.host.empty()) {
-                context->request_url = getURLComponents(url_str);
-            }
-            else {
-                context = (g_contextForHandle[handle] = std::make_unique<handle_ctx>(handle)).get();
-            }
-            va_end(args);
-            return orig_curl_easy_setopt(handle, option, url_str);
-        }
-        case CURLOPT_WRITEDATA:
-        {
-            TRACE_CALL_WITH(CURLOPT_WRITEDATA, handle);
-            va_start(args, option);
-            auto data = va_arg(args, void*);
-            context->userdata = data;
-            va_end(args);
-            return orig_curl_easy_setopt(handle, option, context);
-        }
-        case CURLOPT_WRITEFUNCTION:
-        {
-            TRACE_CALL_WITH(CURLOPT_WRITEFUNCTION, handle);
-            va_start(args, option);
-            auto write_callback_ptr = va_arg(args, write_callback_ptr_t);
-            context->orig_write_callback = write_callback_ptr;
-            va_end(args);
-            return orig_curl_easy_setopt(handle, option, write_callback_hook);
-        }
-        default:;
-        }
+    switch (option) {
+    case CURLOPT_URL:
+    {
+        TRACE_CALL_WITH(CURLOPT_URL, handle);
+        va_start(args, option);
+        auto url_str = va_arg(args, char*);
+        context->request_url = getURLComponents(url_str);
+        va_end(args);
+        return orig_curl_easy_setopt(handle, option, url_str);
+    }
+    case CURLOPT_WRITEDATA:
+    {
+        TRACE_CALL_WITH(CURLOPT_WRITEDATA, handle);
+        va_start(args, option);
+        auto data = va_arg(args, void*);
+        context->userdata = data;
+        va_end(args);
+        return orig_curl_easy_setopt(handle, option, context);
+    }
+    case CURLOPT_WRITEFUNCTION:
+    {
+        TRACE_CALL_WITH(CURLOPT_WRITEFUNCTION, handle);
+        va_start(args, option);
+        auto write_callback_ptr = va_arg(args, write_callback_ptr_t);
+        context->orig_write_callback = write_callback_ptr;
+        va_end(args);
+        return orig_curl_easy_setopt(handle, option, write_callback_hook);
+    }
+    default:;
     }
 
     void* ret = __builtin_apply(orig_curl_easy_setopt, args_copy, 128);
@@ -223,20 +243,20 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
 void curl_easy_reset(CURL* handle) {
     TRACE_CALL(handle);
     //log_response(handle);
-    g_contextForHandle.erase(handle);
+    destroy_context(handle);
     orig_curl_easy_reset(handle);
 }
 
 void curl_easy_cleanup(CURL* handle) {
     TRACE_CALL(handle);
     //log_response(handle);
-    g_contextForHandle.erase(handle);
+    destroy_context(handle);
     orig_curl_easy_cleanup(handle);
 }
 
 static void close_callback(void* ctx) {
     auto context = reinterpret_cast<handle_ctx*>(ctx);
-    context->complete.set_value();
+    context->complete();
 }
 
 void do_filter_request(handle_ctx* context) {
@@ -252,23 +272,21 @@ void do_filter_request(handle_ctx* context) {
 
 CURLcode curl_easy_perform(CURL* handle) {
     TRACE_CALL(handle);
-    auto context = g_contextForHandle[handle].get();
+    auto context = get_context(handle);
     context->easy_perform_called = true;
     do_filter_request(context);
 
     auto code = orig_curl_easy_perform(handle);
     // signal that the response is complete
     ResponseClose(context);
-    // wait for completion
-    context->is_complete.get();
+    context->wait_for_completion();
 
     return code;
 }
 
 CURLMcode curl_multi_add_handle(CURLM* multi_handle, CURL* easy_handle) {
     TRACE_CALL(easy_handle);
-
-    auto context = g_contextForHandle[easy_handle].get();
+    auto context = get_context(easy_handle);
     if (!context->easy_perform_called) {
         do_filter_request(context);
     }
@@ -287,12 +305,11 @@ CURLMsg* curl_multi_info_read(CURLM* multi_handle, int* msgs_in_queue) {
 
     if (msg && msg->msg == CURLMSG_DONE) {
         //fprintf(stderr, "\twith handle %p\n", msg->easy_handle);
-        auto context = g_contextForHandle[msg->easy_handle].get();
-        if (context && !context->easy_perform_called) {
+        auto context = get_context(msg->easy_handle);
+        if (!context->easy_perform_called) {
             // signal that the response is complete
             ResponseClose(context);
-            // wait for completion
-            context->is_complete.get();
+            context->wait_for_completion();
         }
     }
 
