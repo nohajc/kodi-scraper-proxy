@@ -11,3 +11,8 @@ libbridge.h: libbridge.so
 
 libbridge.so: libbridge.go
 	go build -buildmode=c-shared -o $@ $<
+
+install: curl_hook.so libbridge.so
+	mkdir -p ../../bin
+	cp $^ ../../bin
+	cp ../../cmd/install_hook/install_hook.sh ../../bin
