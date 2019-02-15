@@ -1,6 +1,6 @@
-CXX=g++
-CXXFLAGS=-fPIC -std=c++17
-LDFLAGS=-L. -lbridge
+CXX := g++
+CXXFLAGS := ${CXXFLAGS} -fPIC -std=c++17
+LDFLAGS := -L. -lbridge
 
 curl_hook.so: curl_hook.o
 	g++ -shared -fPIC $< -o $@ $(LDFLAGS)

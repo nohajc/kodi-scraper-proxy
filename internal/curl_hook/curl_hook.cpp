@@ -222,6 +222,10 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
         auto write_callback_ptr = va_arg(args, write_callback_ptr_t);
         context->orig_write_callback = write_callback_ptr;
         va_end(args);
+        // First we need to set default WRITEDATA
+        // in case the client does not use userdata
+        // because we always need access to context.
+        orig_curl_easy_setopt(handle, CURLOPT_WRITEDATA, context);
         return orig_curl_easy_setopt(handle, option, write_callback_hook);
     }
     default:;
