@@ -1,6 +1,6 @@
 tv-shows:
 - name: Sliders
-  id: 1649
+  id: 1
   ordering:
   - season: 1
     episodes:
@@ -57,7 +57,7 @@ tv-shows:
     - s02e23
     - s02e25
 - name: Star Trek TOS
-  id: 253
+  id: 2
   ordering:
   - season: 1
     episodes:
@@ -91,5 +91,8 @@ tv-shows:
       - s01e28
       - s01e29
 id-aliases:
-- tmdb: 1649
+- id: 1
+  tmdb: 1649
   tvdb: 76557
+- id: 2
+  tmdb: 253

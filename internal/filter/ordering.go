@@ -27,10 +27,15 @@ func NewOfflineOrderingMap(cfg Config) *OfflineOrderingMap {
 	}
 
 	for _, alias := range cfg.Aliases {
-		id := alias.TMDB
-		result.ResolveID[fmt.Sprintf("tmdb-%v", id)] = id
-		result.ResolveID[fmt.Sprintf("tvdb-%v", alias.TVDB)] = id
+		id := alias.ID
+		if alias.TMDB != nil {
+			result.ResolveID[fmt.Sprintf("tmdb-%v", *alias.TMDB)] = id
+		}
+		if alias.TVDB != nil {
+			result.ResolveID[fmt.Sprintf("tvdb-%v", *alias.TVDB)] = id
+		}
 	}
+	log.Printf("%#v\n", result.ResolveID)
 
 	return result
 }
