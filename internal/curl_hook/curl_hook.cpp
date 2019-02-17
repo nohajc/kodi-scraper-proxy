@@ -80,6 +80,7 @@ public:
     write_callback_ptr_t orig_write_callback = (write_callback_ptr_t)fwrite;
     void* userdata = nullptr;
     url_components request_url;
+    std::string post_data;
     bool easy_perform_called = false;
 
     handle_ctx(CURL* h) : handle(h) {}
@@ -209,6 +210,16 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
         context->request_url = getURLComponents(url_str);
         va_end(args);
         return orig_curl_easy_setopt(handle, option, url_str);
+    }
+    case CURLOPT_POSTFIELDS:
+    {
+        TRACE_CALL_WITH(CURLOPT_POSTFIELDS, handle);
+        va_start(args, option);
+        auto post_data = va_arg(args, char*);
+        fprintf(stderr, "POST data: %s\n", post_data);
+        context->post_data = post_data;
+        va_end(args);
+        return orig_curl_easy_setopt(handle, option, post_data);
     }
     case CURLOPT_WRITEDATA:
     {

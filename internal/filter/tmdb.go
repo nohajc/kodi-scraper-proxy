@@ -9,22 +9,6 @@ import (
 	json "github.com/virtuald/go-ordered-json"
 )
 
-// ScraperAdapter in an interface for kodi scraper filters
-// which can modify response from the scraper source
-type ScraperAdapter interface {
-	Host() string
-	ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestURL string)
-}
-
-// EpisodeOrderingMap is an interface for mapping episode numbers to different numbers
-type EpisodeOrderingMap interface {
-	// HasSpecialOrdering returns true if episodes of the given show need reordering
-	HasSpecialOrdering(showID int64) bool
-	// FromProductionToAired takes episode number in production order
-	// and returns the corresponding episode number in aired order
-	FromProductionToAired(showID int64, season int, episode int) (int, int)
-}
-
 // Episode structure inside JSON response
 type Episode struct {
 	AirDate        string               `json:"air_date"`
@@ -60,14 +44,14 @@ type TMDBScraperOrderingAdapter struct {
 	OrderingMap EpisodeOrderingMap
 }
 
-// Host returns host name of the scraper source
-func (*TMDBScraperOrderingAdapter) Host() string {
-	return "api.themoviedb.org"
+// AppliesTo returns boolean indicating whether the adapter applies to the given requestHost
+func (*TMDBScraperOrderingAdapter) AppliesTo(requestHost string) bool {
+	return requestHost == "api.themoviedb.org"
 }
 
 // ResponseBodyFilter reads request from in, potentially modifies it and writes the result to out
-func (adp *TMDBScraperOrderingAdapter) ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestURL string) {
-	if !adp.responseBodyFilterInternal(in, out, requestURL) {
+func (adp *TMDBScraperOrderingAdapter) ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestHost string, requestPath string) {
+	if !adp.responseBodyFilterInternal(in, out, requestPath) {
 		go func() {
 			defer out.Close()
 			io.Copy(out, in)
@@ -125,60 +109,4 @@ func (adp *TMDBScraperOrderingAdapter) responseBodyFilterInternal(in io.ReadClos
 		}
 	}()
 	return true
-}
-
-// OfflineOrderingMap contains episode ordering map loaded from an offline resource
-type OfflineOrderingMap struct {
-	Table map[int64]map[int][]string
-}
-
-// NewOfflineOrderingMap creates new instance from Config
-func NewOfflineOrderingMap(cfg Config) *OfflineOrderingMap {
-	result := &OfflineOrderingMap{make(map[int64]map[int][]string)}
-
-	for _, tvShow := range cfg.TVShows {
-		result.Table[tvShow.ID] = make(map[int][]string)
-		for _, epSeasonMap := range tvShow.Ordering {
-			result.Table[tvShow.ID][epSeasonMap.Season] = make([]string, len(epSeasonMap.Episodes))
-			copy(result.Table[tvShow.ID][epSeasonMap.Season], epSeasonMap.Episodes)
-		}
-	}
-
-	return result
-}
-
-// HasSpecialOrdering returns true if episodes of the given show need reordering
-func (m *OfflineOrderingMap) HasSpecialOrdering(showID int64) bool {
-	_, ok := m.Table[showID]
-	return ok
-}
-
-// FromProductionToAired takes production episode number, returns aired episode number
-func (m *OfflineOrderingMap) FromProductionToAired(showID int64, season int, episode int) (airedSeason int, airedEpisode int) {
-	airedSeason = season
-	airedEpisode = episode
-
-	tvShow, ok := m.Table[showID]
-	if !ok {
-		return
-	}
-
-	epList, ok := tvShow[season]
-	if !ok {
-		return
-	}
-
-	if episode < 1 || episode > len(epList) {
-		return
-	}
-
-	epNum := epList[episode-1]
-	n, err := fmt.Sscanf(epNum, "s%de%d", &airedSeason, &airedEpisode)
-
-	if n != 2 || err != nil {
-		log.Println(err)
-	}
-
-	log.Printf("Mapping s%02de%02d to s%02de%02d\n", season, episode, airedSeason, airedEpisode)
-	return
 }

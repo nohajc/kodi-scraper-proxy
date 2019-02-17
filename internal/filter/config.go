@@ -20,9 +20,16 @@ type TVShow struct {
 	Ordering []EpisodeMap `yaml:"ordering"`
 }
 
+// Alias contains IDs of a TV show according to various well-known databases
+type Alias struct {
+	TMDB string `yaml:"tmdb"`
+	TVDB string `yaml:"tvdb"`
+}
+
 // Config contains an array of TVShows
 type Config struct {
 	TVShows []TVShow `yaml:"tv-shows"`
+	Aliases []Alias  `yaml:"id-aliases"`
 }
 
 // LoadConfig from the given yaml file
@@ -41,6 +48,7 @@ func LoadConfig(filePath string) Config {
 		log.Println(err)
 		return Config{}
 	}
+	//log.Printf("%#v", cfg)
 
 	return cfg
 }

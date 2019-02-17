@@ -5,8 +5,7 @@ import "io"
 // ResponseAdapter is an interface for plugins
 // which define HTTP response body filters
 type ResponseAdapter interface {
-	// hostname which this filter applies to
-	Host() string
+	AppliesTo(requestHost string) bool
 	// current limitation is that you must always consume the entire input
-	ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestURL string)
+	ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestHost string, requestPath string)
 }

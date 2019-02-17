@@ -37,13 +37,13 @@ var (
 // NopResponseAdapter does nothing
 type NopResponseAdapter struct{}
 
-// Host retuns empty string so that no valid request can match this filter
-func (*NopResponseAdapter) Host() string {
-	return ""
+// AppliesTo always retuns false so that no valid request can match this filter
+func (*NopResponseAdapter) AppliesTo(string) bool {
+	return false
 }
 
 // ResponseBodyFilter is never called because empty host is invalid
-func (*NopResponseAdapter) ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestURL string) {
+func (*NopResponseAdapter) ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestHost string, requestPath string) {
 }
 
 var gAdapter api.ResponseAdapter = &NopResponseAdapter{}
@@ -115,6 +115,7 @@ func FilterRequest(
 	userdata unsafe.Pointer) {
 
 	//log.Printf("FilterRequest with handle %v\n", hnd)
+	//log.Printf("Requesting %s%s", urlHost, urlPath)
 
 	ctx := &context{}
 
@@ -129,12 +130,12 @@ func FilterRequest(
 		CloseCB:  closeCallback,
 	}
 
-	if gAdapter.Host() == "*" || gAdapter.Host() == urlHost {
+	if gAdapter.AppliesTo(urlHost) {
 		r, w := io.Pipe()
 		ctx.ReadEnd = r
 		ctx.WriteEnd = w
 		log.Printf("Applying response filter to %s%s", urlHost, urlPath)
-		go gAdapter.ResponseBodyFilter(ctx.ReadEnd, callbackWriteCloser, urlPath)
+		go gAdapter.ResponseBodyFilter(ctx.ReadEnd, callbackWriteCloser, urlHost, urlPath)
 	} else {
 		// if adapter host does not match url host, do not call BodyFilter at all;
 		// set ctx.WriteEnd to CallbackWriteCloser instead for direct copy
