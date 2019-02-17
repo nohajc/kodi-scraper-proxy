@@ -22,8 +22,8 @@ type TVShow struct {
 
 // Alias contains IDs of a TV show according to various well-known databases
 type Alias struct {
-	TMDB string `yaml:"tmdb"`
-	TVDB string `yaml:"tvdb"`
+	TMDB int64 `yaml:"tmdb"`
+	TVDB int64 `yaml:"tvdb"`
 }
 
 // Config contains an array of TVShows

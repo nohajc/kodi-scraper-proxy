@@ -74,8 +74,9 @@ func (adp *TMDBScraperOrderingAdapter) responseBodyFilterInternal(in io.ReadClos
 	}
 
 	log.Printf("Requested TV show %d, season %d\n", tvShowID, seasonNum)
+	idString := fmt.Sprintf("tmdb-%v", tvShowID)
 
-	if !adp.OrderingMap.HasSpecialOrdering(tvShowID) {
+	if !adp.OrderingMap.HasSpecialOrdering(idString) {
 		log.Println("Doesn't need reordering")
 		return false
 	}
@@ -96,7 +97,7 @@ func (adp *TMDBScraperOrderingAdapter) responseBodyFilterInternal(in io.ReadClos
 
 		episodesReordered := make([]Episode, len(parsedResponse.Episodes))
 		for i := range parsedResponse.Episodes {
-			_, airedEpNum := adp.OrderingMap.FromProductionToAired(tvShowID, seasonNum, i+1)
+			_, airedEpNum := adp.OrderingMap.FromProductionToAired(idString, seasonNum, i+1)
 			episodesReordered[i] = parsedResponse.Episodes[airedEpNum-1]
 			episodesReordered[i].EpisodeNumber = i + 1
 		}
