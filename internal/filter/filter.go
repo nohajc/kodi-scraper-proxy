@@ -168,7 +168,7 @@ func (m *OfflineOrderingMap) FromProductionToAired(showID int64, season int, epi
 		return
 	}
 
-	if episode >= len(epList) {
+	if episode < 1 || episode > len(epList) {
 		return
 	}
 

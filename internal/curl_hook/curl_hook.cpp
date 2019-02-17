@@ -2,6 +2,7 @@
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstdarg>
+#include <cassert>
 #include <utility>
 #include <unordered_map>
 #include <memory>
@@ -171,9 +172,11 @@ public:
 #ifdef DEBUG
 #define TRACE_CALL(handle) trace_call _call(__FUNCTION__, handle);
 #define TRACE_CALL_WITH(option, handle) trace_call _call(__FUNCTION__, #option, handle)
+#define DLOG(fmt, ...) fprintf(stderr, fmt, ## __VA_ARGS__)
 #else
 #define TRACE_CALL(handle)
 #define TRACE_CALL_WITH(option, handle)
+#define DLOG(fmt, ...)
 #endif
 
 static size_t write_callback_hook(char *ptr, size_t size, size_t nmemb, handle_ctx *context) {
@@ -183,9 +186,9 @@ static size_t write_callback_hook(char *ptr, size_t size, size_t nmemb, handle_c
 }
 
 CURL* curl_easy_init() {
-    TRACE_CALL(nullptr)
+    TRACE_CALL(nullptr);
     auto handle = orig_curl_easy_init();
-    //fprintf(stderr, "   Creating handle %p\n", handle);
+    DLOG("   Creating handle %p\n", handle);
     create_context(handle);
     return handle;
 }
@@ -195,6 +198,7 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
     va_list args;
 
     auto context = get_context(handle);
+    assert(context != nullptr);
 
     switch (option) {
     case CURLOPT_URL:
@@ -247,7 +251,7 @@ CURLcode curl_easy_setopt(CURL *handle, CURLoption option, ...) {
 void curl_easy_reset(CURL* handle) {
     TRACE_CALL(handle);
     //log_response(handle);
-    destroy_context(handle);
+    create_context(handle);
     orig_curl_easy_reset(handle);
 }
 
@@ -259,8 +263,11 @@ void curl_easy_cleanup(CURL* handle) {
 }
 
 static void close_callback(void* ctx) {
+    DLOG("-> close_callback called with context %p\n", ctx);
     auto context = reinterpret_cast<handle_ctx*>(ctx);
+    assert(context != nullptr);
     context->complete();
+    DLOG("<- close_callback\n");
 }
 
 void do_filter_request(handle_ctx* context) {
@@ -277,6 +284,7 @@ void do_filter_request(handle_ctx* context) {
 CURLcode curl_easy_perform(CURL* handle) {
     TRACE_CALL(handle);
     auto context = get_context(handle);
+    assert(context != nullptr);
     context->easy_perform_called = true;
     do_filter_request(context);
 
@@ -291,6 +299,7 @@ CURLcode curl_easy_perform(CURL* handle) {
 CURLMcode curl_multi_add_handle(CURLM* multi_handle, CURL* easy_handle) {
     TRACE_CALL(easy_handle);
     auto context = get_context(easy_handle);
+    assert(context != nullptr);
     if (!context->easy_perform_called) {
         do_filter_request(context);
     }
@@ -308,8 +317,9 @@ CURLMsg* curl_multi_info_read(CURLM* multi_handle, int* msgs_in_queue) {
     auto msg = orig_curl_multi_info_read(multi_handle, msgs_in_queue);
 
     if (msg && msg->msg == CURLMSG_DONE) {
-        //fprintf(stderr, "\twith handle %p\n", msg->easy_handle);
+        DLOG("\twith handle %p\n", msg->easy_handle);
         auto context = get_context(msg->easy_handle);
+        assert(context != nullptr);
         if (!context->easy_perform_called) {
             // signal that the response is complete
             ResponseClose(context);

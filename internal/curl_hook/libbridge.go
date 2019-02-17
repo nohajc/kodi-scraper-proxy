@@ -165,7 +165,9 @@ func ResponseClose(hnd unsafe.Pointer) {
 	ctx := reqMap[uintptr(hnd)]
 	reqMapMtx.Unlock()
 
-	ctx.WriteEnd.Close()
+	if ctx != nil {
+		ctx.WriteEnd.Close()
+	}
 }
 
 func main() {}
