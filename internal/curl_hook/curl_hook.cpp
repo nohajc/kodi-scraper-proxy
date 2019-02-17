@@ -1,5 +1,6 @@
 #include <curl/curl.h>
 #include <dlfcn.h>
+#include <unistd.h>
 #include <cstdio>
 #include <cstdarg>
 #include <cassert>
@@ -115,7 +116,7 @@ handle_ctx* get_context(CURL* handle) {
     return g_contextForHandle[handle].get();
 }
 
-url_components getURLComponents(const std::string& url) {
+static url_components getURLComponents(const std::string& url) {
     auto hostPos = url.find("://");
     std::string fromHost;
     if (hostPos == std::string::npos) {
@@ -136,6 +137,16 @@ GoString to_go_string_view(const std::string& str) {
     return{ &str[0], static_cast<GoInt>(str.size()) };
 }
 
+static const char* get_exec_name() {
+    static std::string name;
+
+    if (name.empty()) {
+        name.reserve(PATH_MAX);
+        readlink("/proc/self/exe", &name[0], PATH_MAX);
+    }
+    return name.c_str();
+}
+
 class trace_call {
     const char* func_name;
     const char* option;
@@ -143,27 +154,27 @@ class trace_call {
 public:
     trace_call(const char* func, CURL* hnd) : func_name(func), option(nullptr), handle(hnd) {
         if (handle) {
-            fprintf(stderr, "-> %s with handle %p\n", func_name, handle);
+            fprintf(stderr, "%s -> %s with handle %p\n", get_exec_name(), func_name, handle);
         }
         else {
-            fprintf(stderr, "-> %s\n", func_name);
+            fprintf(stderr, "%s -> %s\n", get_exec_name(), func_name);
         }
     }
 
     trace_call(const char* func, const char* opt, CURL* hnd) : func_name(func), option(opt), handle(hnd) {
-        fprintf(stderr, "-> %s %s with handle %p\n", func_name, option, handle);
+        fprintf(stderr, "%s -> %s %s with handle %p\n", get_exec_name(), func_name, option, handle);
     }
     ~trace_call() {
         if (handle) {
             if (option) {
-                fprintf(stderr, "<- %s %s with handle %p\n", func_name, option, handle);
+                fprintf(stderr, "%s <- %s %s with handle %p\n", get_exec_name(), func_name, option, handle);
             }
             else {
-                fprintf(stderr, "<- %s with handle %p\n", func_name, handle);
+                fprintf(stderr, "%s <- %s with handle %p\n", get_exec_name(), func_name, handle);
             }
         }
         else {
-            fprintf(stderr, "<- %s\n", func_name);
+            fprintf(stderr, "%s <- %s\n", get_exec_name(), func_name);
         }
     }
 };
@@ -274,11 +285,11 @@ void curl_easy_cleanup(CURL* handle) {
 }
 
 static void close_callback(void* ctx) {
-    DLOG("-> close_callback called with context %p\n", ctx);
+    DLOG("%s -> close_callback called with context %p\n", get_exec_name(), ctx);
     auto context = reinterpret_cast<handle_ctx*>(ctx);
     assert(context != nullptr);
     context->complete();
-    DLOG("<- close_callback\n");
+    DLOG("%s <- close_callback\n", get_exec_name());
 }
 
 void do_filter_request(handle_ctx* context) {

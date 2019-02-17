@@ -1,6 +1,10 @@
 package filter
 
-import "io"
+import (
+	"io"
+	"io/ioutil"
+	"log"
+)
 
 // TVDBScraperOrderingAdapter changes ordering of episodes based on provided mapping
 type TVDBScraperOrderingAdapter struct {
@@ -14,7 +18,13 @@ func (*TVDBScraperOrderingAdapter) AppliesTo(requestHost string) bool {
 
 // ResponseBodyFilter reads request from in, potentially modifies it and writes the result to out
 func (adp *TVDBScraperOrderingAdapter) ResponseBodyFilter(in io.ReadCloser, out io.WriteCloser, requestHost string, requestPath string) {
-	// TODO: implement
 	defer out.Close()
-	io.Copy(out, in)
+	if requestPath == "/login" {
+		token, _ := ioutil.ReadAll(in)
+		log.Printf("JWT token: %s", string(token))
+		_, _ = out.Write(token)
+	} else {
+		// TODO: implement
+		io.Copy(out, in)
+	}
 }
